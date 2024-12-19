@@ -1,120 +1,156 @@
-from flask import Flask, render_template, request, jsonify
 import pandas as pd
+import nltk
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+import pickle
+import os
 
-app = Flask(__name__)
+# Import fungsi pembantu dari utils.py
+from utils import process_text
 
-# Fungsi untuk mengonversi harga dari USD ke IDR
-def convert_to_idr(price_usd, exchange_rate=15000):
-    return price_usd * exchange_rate
+# Import data pelatihan tambahan
+from extra_training_data import training_data
 
-# Membaca data laptop dari file CSV
-df = pd.read_csv('C:\xampp\htdocs\web-quell\python_api\laptop_data.csv')
+# Unduh NLTK resources jika belum
+nltk.download('punkt')
+nltk.download('stopwords')
+nltk.download('wordnet')
 
-# Mengonversi harga ke IDR
-df['Price_IDR'] = df['Price'].apply(lambda x: convert_to_idr(x))
+# Path ke direktori proyek
+project_dir = r'C:\xampp\htdocs\Quell-KCB\python_api'  # Sesuaikan dengan path Anda
 
-# Filter berdasarkan kategori (contoh: programming, gaming, designing)
-def filter_laptops(category, max_price=None, min_ram=None, min_cpu=None, min_gpu=None, min_screen=None, max_weight=None):
-    filtered_df = df
+# Path ke file CSV
+csv_path = os.path.join(project_dir, 'laptop_price.csv')
 
-    # Filter berdasarkan kategori
-    if category == 'programming':
-        filtered_df = filtered_df[(filtered_df['Ram'] >= 8) & (filtered_df['Cpu'].str.contains('Intel Core i5|Intel Core i7'))]
-    elif category == 'gaming':
-        filtered_df = filtered_df[filtered_df['Gpu'].str.contains('NVIDIA|AMD')]
-    elif category == 'designing':
-        filtered_df = filtered_df[(filtered_df['ScreenResolution'].str.contains('1920x1080|2560x1440|3840x2160')) & (filtered_df['Gpu'].str.contains('NVIDIA|AMD'))]
-    
-    # Filter harga maksimal
-    if max_price:
-        filtered_df = filtered_df[filtered_df['Price_IDR'] <= max_price]
-    
-    # Filter RAM minimum
-    if min_ram:
-        filtered_df = filtered_df[filtered_df['Ram'] >= min_ram]
-    
-    # Filter CPU minimum
-    if min_cpu:
-        filtered_df = filtered_df[filtered_df['Cpu'].str.contains(min_cpu)]
-    
-    # Filter GPU minimum
-    if min_gpu:
-        filtered_df = filtered_df[filtered_df['Gpu'].str.contains(min_gpu)]
-    
-    # Filter ukuran layar
-    if min_screen:
-        filtered_df = filtered_df[filtered_df['Inches'] >= min_screen]
-    
-    # Filter bobot maksimum
-    if max_weight:
-        filtered_df = filtered_df[filtered_df['Weight'] <= max_weight]
+# Membaca CSV
+try:
+    data = pd.read_csv(csv_path, encoding='latin1')
+    print("CSV file successfully read with 'latin1' encoding.")
+except UnicodeDecodeError:
+    try:
+        data = pd.read_csv(csv_path, encoding='cp1252')
+        print("CSV file successfully read with 'cp1252' encoding.")
+    except UnicodeDecodeError as e:
+        print("Failed to read CSV file with both 'latin1' and 'cp1252' encodings.")
+        raise e
 
-    return filtered_df
+# Menampilkan nama kolom
+print("Nama kolom dalam CSV:", data.columns.tolist())
 
-@app.route('/')
-def home():
-    return render_template('index.html')
+# Preprocessing kolom Weight untuk menghapus 'kg' dan mengubah menjadi float
+data['Heavy'] = pd.to_numeric(
+    data['Weight'].str.replace('kg', '', regex=False)
+                .str.replace(' Kg', '', regex=False)
+                .str.strip(),
+    errors='coerce'
+)
+data = data.dropna(subset=['Heavy'])
+print(f"'Heavy' column created. {data.shape[0]} records remaining after dropping NaNs.")
 
-@app.route('/recommend', methods=['POST'])
-def recommend():
-    data = request.get_json()
-    description = data.get('description', '').lower()
+# Menambahkan kolom Price_in_IDR
+conversion_rate = 16000  # 1 EUR = 16,000 IDR
+data['Price_in_IDR'] = data['Price_in_euros'] * conversion_rate
+print("'Price_in_IDR' column added.")
 
-    # Menentukan kategori berdasarkan deskripsi pengguna
-    if 'programming' in description:
-        category = 'programming'
-    elif 'gaming' in description:
-        category = 'gaming'
-    elif 'designing' in description:
-        category = 'designing'
+# Membuat label kategori berdasarkan berat
+def categorize_weight(weight):
+    if weight <= 1.5:
+        return 'Ringan'
+    elif 1.5 < weight <= 2.5:
+        return 'Sedang'
     else:
-        category = 'general'
+        return 'Berat'
 
-    # Filter berdasarkan harga
-    max_price = None
-    if 'under 10 million' in description or 'dibawah 10 juta' in description:
-        max_price = 10000000
-    elif 'under 5 million' in description or 'dibawah 5 juta' in description:
-        max_price = 5000000
-    
-    # Filter RAM minimum
-    min_ram = None
-    if '8gb ram' in description:
-        min_ram = 8
-    elif '16gb ram' in description:
-        min_ram = 16
+data['category'] = data['Heavy'].apply(categorize_weight)
 
-    # Filter CPU minimum
-    min_cpu = None
-    if 'i5' in description:
-        min_cpu = 'Intel Core i5'
-    elif 'i7' in description:
-        min_cpu = 'Intel Core i7'
-    
-    # Filter GPU minimum
-    min_gpu = None
-    if 'nvidia' in description:
-        min_gpu = 'NVIDIA'
-    elif 'amd' in description:
-        min_gpu = 'AMD'
+# Membuat label prosesor berdasarkan kolom Gpu dan Cpu
+def extract_processor(gpu, cpu):
+    if 'Nvidia' in gpu or 'Nvidia' in cpu:
+        return 'Nvidia'
+    elif 'AMD' in gpu or 'AMD' in cpu:
+        return 'AMD'
+    elif 'Intel' in cpu:
+        return 'Intel'
+    elif 'Apple' in cpu:
+        return 'Apple'
+    else:
+        return 'Other'
 
-    # Filter ukuran layar minimum
-    min_screen = None
-    if '14 inch' in description:
-        min_screen = 14
-    elif '15 inch' in description:
-        min_screen = 15
+data['processor'] = data.apply(lambda row: extract_processor(row['Gpu'], row['Cpu']), axis=1)
 
-    # Filter bobot maksimum
-    max_weight = None
-    if 'under 2 kg' in description or 'dibawah 2 kg' in description:
-        max_weight = 2
+# Membuat label harga berdasarkan Price_in_IDR
+def categorize_price(price_idr):
+    if price_idr <= 8000000:
+        return 'Murah'
+    elif 8000000 < price_idr <= 20000000:
+        return 'Biasa saja'
+    else:
+        return 'Mahal'
 
-    # Mendapatkan hasil filter
-    laptops = filter_laptops(category, max_price, min_ram, min_cpu, min_gpu, min_screen, max_weight)
-    laptops = laptops.to_dict(orient='records')  # Mengonversi hasil filter menjadi format dictionary
+data['price'] = data['Price_in_IDR'].apply(categorize_price)
 
-    return jsonify(laptops)
+# Menambahkan kolom 'company_type' dan 'product'
+if 'Company' in data.columns and 'Product' in data.columns:
+    data['company_type'] = data['Company']
+    data['product'] = data['Product']
+else:
+    raise ValueError("Kolom 'Company' atau 'Product' tidak ditemukan dalam DataFrame.")
 
-if __name__ == '__main__':
-    app.run(debug=True)
+# Menyiapkan data pelatihan dari data tambahan
+training_texts = [item[0] for item in training_data]
+training_labels = [item[1] for item in training_data]
+
+# Membuat DataFrame dari training_data
+df_train_extra = pd.DataFrame(training_labels)
+df_train_extra['description'] = training_texts
+
+# Mengambil deskripsi dari data asli
+df_train_original = data[['Product', 'category', 'processor', 'price', 'company_type', 'product']].copy()
+df_train_original.rename(columns={'Product': 'description'}, inplace=True)
+
+# Menggabungkan data asli dengan data tambahan
+df_train = pd.concat([df_train_original, df_train_extra], ignore_index=True)
+
+# Menghapus baris dengan NaN dalam target variabel
+df_train = df_train.dropna(subset=['category', 'processor', 'price', 'company_type', 'product'])
+X = df_train['description'].apply(process_text)
+y = df_train[['category', 'processor', 'price', 'company_type', 'product']]
+
+# Mengurangi High Cardinality pada 'product'
+top_n = 100
+top_products = y['product'].value_counts().nlargest(top_n).index
+y.loc[:, 'product'] = y['product'].apply(lambda x: x if x in top_products else 'Other')
+
+# Membagi data menjadi train dan test
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Membangun pipeline
+pipeline = Pipeline([
+    ('tfidf', TfidfVectorizer(ngram_range=(1,2))),
+    ('clf', MultiOutputClassifier(RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')))
+])
+
+# Melatih model
+print("Training model...")
+pipeline.fit(X_train, y_train)
+print("Model training completed.")
+
+# Prediksi pada data test
+y_pred = pipeline.predict(X_test)
+
+# Evaluasi model
+labels = y.columns
+for i, label in enumerate(labels):
+    print(f"\nClassification Report for '{label}':")
+    print(classification_report(y_test[label], y_pred[:, i], zero_division=0))
+
+# Menyimpan model
+model_path = os.path.join(project_dir, 'model.pkl')
+with open(model_path, 'wb') as f:
+    pickle.dump(pipeline, f)
+
+print("\nModel berhasil disimpan di 'model.pkl'.")

@@ -1,45 +1,69 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id"> <!-- Mengubah bahasa ke 'id' untuk Bahasa Indonesia -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Recommended Laptops</title>
+    <title>Rekomendasi Laptop</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            padding: 20px;
+        }
+        table {
+            width: 100%;
+            margin-top: 20px;
+            background-color: #fff;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #007bff;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+    </style>
 </head>
 <body>
-    <h1>Recommended Laptops</h1>
-    {% if laptops %}
-        <table border="1">
+    <h1>Rekomendasi Laptop</h1>
+    @if($laptops && count($laptops) > 0)
+        <table class="table table-bordered">
             <thead>
                 <tr>
-                    <th>Nama Laptop</th>
+                    <th>Produk</th>
                     <th>Processor</th>
                     <th>Graphic Card</th>
                     <th>RAM</th>
                     <th>OS</th>
-                    <th>Harga</th>
-                    <th>Panel Layar</th>
-                    <th>Refresh Rate</th>
-                    <th>Berat</th>
+                    <th>Harga (IDR)</th>
+                    <th>Inches</th>
+                    <th>Resolusi Layar</th>
+                    <th>Berat (Kg)</th>
                 </tr>
             </thead>
             <tbody>
-                {% for laptop in laptops %}
+                @foreach($laptops as $laptop)
                     <tr>
-                        <td>{{ laptop['Nama Laptop'] }}</td>
-                        <td>{{ laptop['Processor'] }}</td>
-                        <td>{{ laptop['Gpu'] }}</td>
-                        <td>{{ laptop['Ram'] }} GB</td>
-                        <td>{{ laptop['OS'] }}</td>
-                        <td>{{ laptop['Price_IDR'] | format_price }}</td>
-                        <td>{{ laptop['ScreenResolution'] }}</td>
-                        <td>{{ laptop['RefreshRate'] }}</td>
-                        <td>{{ laptop['Weight'] }} kg</td>
+                        <td>{{ $laptop['Product'] }}</td>
+                        <td>{{ $laptop['Cpu'] }}</td>
+                        <td>{{ $laptop['Gpu'] }}</td>
+                        <td>{{ $laptop['Ram'] }}</td>
+                        <td>{{ $laptop['OpSys'] }}</td>
+                        <td>Rp {{ number_format($laptop['Price_in_IDR'], 0, ',', '.') }}</td>
+                        <td>{{ $laptop['Inches'] }} inch</td>
+                        <td>{{ $laptop['ScreenResolution'] }}</td>
+                        <td>{{ $laptop['Weight'] }}</td>
                     </tr>
-                {% endfor %}
+                @endforeach
             </tbody>
         </table>
-    {% else %}
+    @else
         <p>Maaf, tidak ditemukan laptop yang sesuai dengan deskripsi Anda.</p>
-    {% endif %}
+    @endif
 </body>
 </html>

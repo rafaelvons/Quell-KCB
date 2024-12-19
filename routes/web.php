@@ -48,7 +48,7 @@ Route::get('/compare', [HomeController::class, 'compare'])->name('compare');
 
 use App\Http\Controllers\LaptopController;
 
-Route::post('/recommend', [LaptopController::class, 'recommend']);
+Route::post('/recommend', [LaptopController::class, 'recommend'])->name('recommend');
 Route::get('/form', function () {
     return view('form');
 });
